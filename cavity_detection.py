@@ -53,6 +53,38 @@ def check_fpocket_installed() -> bool:
     return True
 
 
+def _resolve_fpocket_output_dir(output_dir: Path, expected_dir: Path, protein_stem: str) -> Optional[Path]:
+    """
+    Resolve fpocket output directory robustly.
+
+    fpocket sometimes writes output with a different stem depending on how
+    input is passed. This helper finds the most likely *_out directory.
+    """
+    if expected_dir.exists():
+        return expected_dir
+
+    # Strong match based on stem
+    stem_match = output_dir / f"{protein_stem}_out"
+    if stem_match.exists():
+        return stem_match
+
+    candidates = [
+        p for p in output_dir.glob("*_out")
+        if p.is_dir() and (p / "pockets").exists()
+    ]
+    if not candidates:
+        return None
+
+    # Prefer exact name if present among candidates
+    exact_name = f"{protein_stem}_out"
+    for candidate in candidates:
+        if candidate.name == exact_name:
+            return candidate
+
+    # Fallback: pick most recently modified output directory
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def detect_cavities(
     protein_pdb_path: str,
     output_dir: Optional[Path] = None,
@@ -119,15 +151,28 @@ def detect_cavities(
     # Check if fpocket output already exists (caching)
     fpocket_output_dir = output_dir / f"{protein_path.stem}_out"
     
-    if use_cache and fpocket_output_dir.exists():
+    resolved_cached_dir = _resolve_fpocket_output_dir(output_dir, fpocket_output_dir, protein_path.stem)
+
+    if use_cache and resolved_cached_dir is not None:
+        fpocket_output_dir = resolved_cached_dir
         print(f"[INFO] Using cached fpocket results from {fpocket_output_dir}")
     else:
+        run_input_path = protein_path
+        copied_input = False
+
+        # Ensure fpocket runs against an input local to output_dir for
+        # deterministic output folder naming in container temp directories.
+        if protein_path.parent.resolve() != output_dir.resolve():
+            run_input_path = output_dir / protein_path.name
+            shutil.copy2(protein_path, run_input_path)
+            copied_input = True
+
         # Run fpocket
         try:
             # fpocket -f protein.pdb -m <min_alpha_sphere>
             cmd = [
                 'fpocket',
-                '-f', str(protein_path),
+                '-f', str(run_input_path.name),
                 '-m', str(min_alpha_sphere)
             ]
             
@@ -151,16 +196,34 @@ def detect_cavities(
             raise CavityDetectionError(f"fpocket timed out after {timeout} seconds")
         except Exception as e:
             raise CavityDetectionError(f"fpocket execution failed: {str(e)}")
+        finally:
+            if copied_input and run_input_path.exists():
+                try:
+                    run_input_path.unlink()
+                except Exception:
+                    pass
+
+        resolved_output_dir = _resolve_fpocket_output_dir(output_dir, fpocket_output_dir, protein_path.stem)
+        if resolved_output_dir is not None and resolved_output_dir != fpocket_output_dir:
+            print(f"[WARNING] Expected fpocket output dir not found, using detected output: {resolved_output_dir}")
+        fpocket_output_dir = resolved_output_dir or fpocket_output_dir
     
     # Parse fpocket output (use try-except to avoid race condition)
     try:
         # Check directory exists atomically within try block
         if not fpocket_output_dir.exists():
+            available_dirs = [p.name for p in output_dir.glob("*_out") if p.is_dir()]
             raise CavityDetectionError(
-                f"fpocket output directory not found: {fpocket_output_dir}"
+                f"fpocket output directory not found: {fpocket_output_dir}. "
+                f"Available *_out directories: {available_dirs}"
             )
+
+        detected_stem = protein_path.stem
+        if fpocket_output_dir.name.endswith("_out"):
+            detected_stem = fpocket_output_dir.name[:-4]
+
         # Parse cavity information
-        cavities = parse_fpocket_output(fpocket_output_dir, protein_path.stem, margin, min_grid_size, max_grid_size)
+        cavities = parse_fpocket_output(fpocket_output_dir, detected_stem, margin, min_grid_size, max_grid_size)
     except CavityDetectionError:
         # Re-raise our custom errors
         raise

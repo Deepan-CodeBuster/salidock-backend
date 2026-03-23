@@ -706,7 +706,16 @@ def run_fpocket_rescore(
     
     fpocket_dir = Path(fpocket_output_dir)
     if not fpocket_dir.exists():
-        raise P2RANKError(f"fpocket output directory not found: {fpocket_output_dir}")
+        parent_dir = fpocket_dir.parent
+        fallback_candidates = [
+            p for p in parent_dir.glob("*_out")
+            if p.is_dir() and (p / "pockets").exists()
+        ]
+        if fallback_candidates:
+            fpocket_dir = max(fallback_candidates, key=lambda p: p.stat().st_mtime)
+            print(f"[WARNING] Expected fpocket output not found, using detected output: {fpocket_dir}")
+        else:
+            raise P2RANKError(f"fpocket output directory not found: {fpocket_output_dir}")
     
     # Set output directory
     if output_dir is None:
