@@ -10,7 +10,7 @@ dependencies:
   - fpocket
   - vina
   - gemmi
-  - openjdk
+  - openjdk=21
   - numpy
   - biopython
   - requests
