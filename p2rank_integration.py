@@ -43,6 +43,21 @@ from physicochemical_properties import compute_pocket_features, get_pocket_physi
 
 import os
 
+
+def _build_p2rank_env() -> Dict[str, str]:
+    """
+    Build a clean environment for invoking P2Rank.
+
+    The `prank` launcher script parses Java version output. If variables like
+    `JAVA_TOOL_OPTIONS` are set globally, Java prints a "Picked up ..." banner
+    that can break that parsing logic and cause script syntax errors.
+    """
+    env = os.environ.copy()
+    env.pop('JAVA_TOOL_OPTIONS', None)
+    env.pop('_JAVA_OPTIONS', None)
+    env.pop('JDK_JAVA_OPTIONS', None)
+    return env
+
 def _find_p2rank_installation():
     """
     Universal P2Rank detection - works across different installations.
@@ -151,7 +166,8 @@ def check_p2rank_installed() -> bool:
             capture_output=True,
             text=True,
             timeout=30,  # Increased for WSL/Java startup
-            cwd=cwd  # Run from P2RANK home directory if available
+            cwd=cwd,  # Run from P2RANK home directory if available
+            env=_build_p2rank_env()
         )
         
         # Check for Java classpath errors
@@ -272,7 +288,8 @@ def detect_cavities_p2rank(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=P2RANK_HOME  # CRITICAL: Run from P2RANK home to fix classpath
+                cwd=P2RANK_HOME,  # CRITICAL: Run from P2RANK home to fix classpath
+                env=_build_p2rank_env()
             )
             
             if result.returncode != 0:
@@ -747,7 +764,8 @@ def run_fpocket_rescore(
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=P2RANK_HOME  # Run from P2RANK home
+            cwd=P2RANK_HOME,  # Run from P2RANK home
+            env=_build_p2rank_env()
         )
         
         if result.returncode != 0:
