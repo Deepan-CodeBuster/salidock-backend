@@ -3898,7 +3898,103 @@ async def get_2d_interaction_svg(session_id: str, pose: int):
                         pass
 
         except Exception as e:
-            raise HTTPException(status_code=404, detail=f"2D interaction source not found for pose {pose}: {e}")
+            logger.warning(f"Cloud 2D source missing for {session_id} pose {pose}, trying on-demand generation: {e}")
+
+            # On-demand cloud generation fallback (same strategy as complex download endpoint)
+            try:
+                import json
+
+                # 1) Download prepared protein
+                protein_bytes = supabase_mgr.download_result_file(
+                    session_id,
+                    "intermediate/protein_prepared.pdbqt"
+                )
+                with tempfile.NamedTemporaryFile(suffix=".pdbqt", delete=False) as tmp_protein:
+                    tmp_protein.write(protein_bytes)
+                    protein_pdbqt_cloud = Path(tmp_protein.name)
+
+                # 2) Resolve pose source
+                mode_in_file_cloud = pose
+                ligand_candidates = []
+                try:
+                    report_bytes = supabase_mgr.download_result_file(
+                        session_id,
+                        "reports/docking_report.json"
+                    )
+                    report_data = json.loads(report_bytes.decode("utf-8"))
+                    poses = report_data.get("poses", [])
+                    if pose <= len(poses):
+                        pose_info = poses[pose - 1]
+                        mode_in_file_cloud = int(pose_info.get("mode", pose))
+                        cavity_id = pose_info.get("cavity_id")
+                        if cavity_id is not None:
+                            ligand_candidates.append(f"intermediate/docking_cavity_{cavity_id}_out.pdbqt")
+                except Exception as report_err:
+                    logger.warning(f"Could not read cloud docking report for 2D generation: {report_err}")
+
+                # Generic fallback
+                ligand_candidates.append("intermediate/docking_out_out.pdbqt")
+
+                ligand_pdbqt_cloud = None
+                for candidate in ligand_candidates:
+                    try:
+                        ligand_bytes = supabase_mgr.download_result_file(session_id, candidate)
+                        with tempfile.NamedTemporaryFile(suffix=".pdbqt", delete=False) as tmp_ligand:
+                            tmp_ligand.write(ligand_bytes)
+                            ligand_pdbqt_cloud = Path(tmp_ligand.name)
+                        break
+                    except Exception:
+                        continue
+
+                if ligand_pdbqt_cloud is None:
+                    raise HTTPException(status_code=404, detail=f"Docking results not found for pose {pose}")
+
+                # 3) Generate complex and cache it
+                complex_pdb = create_protein_ligand_complex(
+                    protein_pdbqt=protein_pdbqt_cloud,
+                    ligand_pdbqt=ligand_pdbqt_cloud,
+                    pose_number=mode_in_file_cloud,
+                    include_remarks=True
+                )
+                complex_bytes = complex_pdb.encode("utf-8")
+
+                try:
+                    supabase_mgr.upload_result_file(
+                        session_id=session_id,
+                        filename=f"complexes/complex_pose_{pose}.pdb",
+                        file_content=complex_bytes
+                    )
+                except Exception as upload_err:
+                    logger.warning(f"Could not cache generated 2D complex to cloud: {upload_err}")
+
+                # 4) Parse and return SVG
+                with tempfile.NamedTemporaryFile(suffix=".pdb", delete=False) as tmp:
+                    tmp.write(complex_bytes)
+                    complex_path = Path(tmp.name)
+
+                try:
+                    protein_atoms, ligand_atoms = parse_pdb(str(complex_path))
+                    affinity = extract_affinity_from_pdb(str(complex_path))
+                    interactions = detect(protein_atoms, ligand_atoms)
+                    svg_content = render_svg(str(complex_path), interactions, affinity)
+                    return Response(content=svg_content, media_type="image/svg+xml")
+                finally:
+                    if complex_path.exists():
+                        try:
+                            complex_path.unlink()
+                        except Exception:
+                            pass
+            finally:
+                try:
+                    if 'protein_pdbqt_cloud' in locals() and protein_pdbqt_cloud.exists():
+                        protein_pdbqt_cloud.unlink()
+                except Exception:
+                    pass
+                try:
+                    if 'ligand_pdbqt_cloud' in locals() and ligand_pdbqt_cloud and ligand_pdbqt_cloud.exists():
+                        ligand_pdbqt_cloud.unlink()
+                except Exception:
+                    pass
 
     session_dir = get_session_dir(session_id)
     protein_pdbqt = session_dir / "protein_prepared.pdbqt"

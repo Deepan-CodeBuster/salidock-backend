@@ -1,0 +1,16 @@
+# 2) Create backend .gitignore
+@"
+__pycache__/
+*.pyc
+.env
+temp_error.log
+"@ | Out-File -Encoding utf8 .gitignore
+
+# 3) Untrack already-committed cache files (keep local files)
+git rm -r --cached __pycache__
+git rm --cached .env 2>$null
+git rm --cached temp_error.log 2>$null
+
+# 4) Amend your last commit
+git add .gitignore
+git commit --amend --no-edit
