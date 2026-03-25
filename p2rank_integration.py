@@ -43,21 +43,6 @@ from physicochemical_properties import compute_pocket_features, get_pocket_physi
 
 import os
 
-
-def _build_p2rank_env() -> Dict[str, str]:
-    """
-    Build a clean environment for invoking P2Rank.
-
-    The `prank` launcher script parses Java version output. If variables like
-    `JAVA_TOOL_OPTIONS` are set globally, Java prints a "Picked up ..." banner
-    that can break that parsing logic and cause script syntax errors.
-    """
-    env = os.environ.copy()
-    env.pop('JAVA_TOOL_OPTIONS', None)
-    env.pop('_JAVA_OPTIONS', None)
-    env.pop('JDK_JAVA_OPTIONS', None)
-    return env
-
 def _find_p2rank_installation():
     """
     Universal P2Rank detection - works across different installations.
@@ -166,8 +151,7 @@ def check_p2rank_installed() -> bool:
             capture_output=True,
             text=True,
             timeout=30,  # Increased for WSL/Java startup
-            cwd=cwd,  # Run from P2RANK home directory if available
-            env=_build_p2rank_env()
+            cwd=cwd  # Run from P2RANK home directory if available
         )
         
         # Check for Java classpath errors
@@ -288,8 +272,7 @@ def detect_cavities_p2rank(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=P2RANK_HOME,  # CRITICAL: Run from P2RANK home to fix classpath
-                env=_build_p2rank_env()
+                cwd=P2RANK_HOME  # CRITICAL: Run from P2RANK home to fix classpath
             )
             
             if result.returncode != 0:
@@ -723,16 +706,7 @@ def run_fpocket_rescore(
     
     fpocket_dir = Path(fpocket_output_dir)
     if not fpocket_dir.exists():
-        parent_dir = fpocket_dir.parent
-        fallback_candidates = [
-            p for p in parent_dir.glob("*_out")
-            if p.is_dir() and (p / "pockets").exists()
-        ]
-        if fallback_candidates:
-            fpocket_dir = max(fallback_candidates, key=lambda p: p.stat().st_mtime)
-            print(f"[WARNING] Expected fpocket output not found, using detected output: {fpocket_dir}")
-        else:
-            raise P2RANKError(f"fpocket output directory not found: {fpocket_output_dir}")
+        raise P2RANKError(f"fpocket output directory not found: {fpocket_output_dir}")
     
     # Set output directory
     if output_dir is None:
@@ -764,8 +738,7 @@ def run_fpocket_rescore(
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=P2RANK_HOME,  # Run from P2RANK home
-            env=_build_p2rank_env()
+            cwd=P2RANK_HOME  # Run from P2RANK home
         )
         
         if result.returncode != 0:

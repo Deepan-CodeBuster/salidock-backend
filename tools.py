@@ -1059,43 +1059,47 @@ def prepare_protein(input_pdb, output_pdbqt, remove_waters=True, keep_hetero_res
         except Exception as e:
             logger.warning(f"  WARNING: Structure analysis failed: {e}")
     
+    pdbfixer_report = {"missing_residues_remaining": -1}  # Unknown / not attempted
+
     # ── Stage 1: PDBFixer — Comprehensive Structure Repair ──
-    logger.info("\nStage 1: PDBFixer — Comprehensive Structure Repair")
-    
-    # Create fixed PDB in system temp directory instead of session directory
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix='_fixed.pdb', delete=False) as tmp:
-        fixed_pdb = tmp.name
-    
-    pdbfixer_report = None
-    
-    try:
-        pdbfixer_report = complete_structure_pdbfixer(input_pdb, fixed_pdb)
-        input_pdb = fixed_pdb  # Use fixed version going forward
-        logger.info("  Using PDBFixer-repaired structure for preparation")
-    except ImportError:
-        logger.warning("  PDBFixer not available — skipping structure repair")
-        logger.info("  → Continuing with original structure")
-        pdbfixer_report = {"missing_residues_remaining": -1}  # Unknown
-        # Clean up unused temp file
-        if os.path.exists(fixed_pdb):
-            try:
-                os.remove(fixed_pdb)
-            except (OSError, PermissionError):
-                pass
-    except RuntimeError as e:
-        logger.error(f"  ERROR: PDBFixer failed: {e}")
-        logger.info("  → Continuing with original structure")
-        pdbfixer_report = {"missing_residues_remaining": -1}  # Unknown
-        # Clean up unused temp file
-        if os.path.exists(fixed_pdb):
-            try:
-                os.remove(fixed_pdb)
-            except (OSError, PermissionError):
-                pass
+    if fix_structure:
+        logger.info("\nStage 1: PDBFixer — Comprehensive Structure Repair")
+        
+        # Create fixed PDB in system temp directory instead of session directory
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='_fixed.pdb', delete=False) as tmp:
+            fixed_pdb = tmp.name
+        
+        try:
+            pdbfixer_report = complete_structure_pdbfixer(input_pdb, fixed_pdb)
+            input_pdb = fixed_pdb  # Use fixed version going forward
+            logger.info("  Using PDBFixer-repaired structure for preparation")
+        except ImportError:
+            logger.warning("  PDBFixer not available — skipping structure repair")
+            logger.info("  → Continuing with original structure")
+            pdbfixer_report = {"missing_residues_remaining": -1}  # Unknown
+            # Clean up unused temp file
+            if os.path.exists(fixed_pdb):
+                try:
+                    os.remove(fixed_pdb)
+                except (OSError, PermissionError):
+                    pass
+        except RuntimeError as e:
+            logger.error(f"  ERROR: PDBFixer failed: {e}")
+            logger.info("  → Continuing with original structure")
+            pdbfixer_report = {"missing_residues_remaining": -1}  # Unknown
+            # Clean up unused temp file
+            if os.path.exists(fixed_pdb):
+                try:
+                    os.remove(fixed_pdb)
+                except (OSError, PermissionError):
+                    pass
+    else:
+        logger.info("\nStage 1: PDBFixer — Skipped (fix_structure=False)")
+        logger.info("  Using original structure without gap/atom repair")
     
     # ── Stage 1.5: AlphaFold Fallback (ONLY if PDBFixer couldn't resolve gaps) ──
-    if use_alphafold_if_incomplete and pdbfixer_report.get("missing_residues_remaining", 0) > 0:
+    if fix_structure and use_alphafold_if_incomplete and pdbfixer_report.get("missing_residues_remaining", 0) > 0:
         logger.info("\nStage 1.5: AlphaFold Fallback")
         logger.info("  PDBFixer could not resolve all gaps — attempting AlphaFold prediction")
         
