@@ -152,15 +152,40 @@ def detect_cavities(
         except Exception as e:
             raise CavityDetectionError(f"fpocket execution failed: {str(e)}")
     
+    # Resolve actual fpocket output directory (fpocket may write near input file)
+    candidate_dirs = [
+        fpocket_output_dir,
+        protein_path.parent / f"{protein_path.stem}_out",
+        output_dir / f"{protein_path.name}_out",
+        protein_path.parent / f"{protein_path.name}_out",
+    ]
+
+    resolved_output_dir = None
+    for cand in candidate_dirs:
+        if cand.exists():
+            resolved_output_dir = cand
+            break
+
+    if resolved_output_dir is None:
+        # Last-resort glob search in both possible roots
+        for root in [output_dir, protein_path.parent]:
+            matches = sorted(root.glob(f"{protein_path.stem}*_out"))
+            for m in matches:
+                if m.is_dir():
+                    resolved_output_dir = m
+                    break
+            if resolved_output_dir is not None:
+                break
+
     # Parse fpocket output (use try-except to avoid race condition)
     try:
         # Check directory exists atomically within try block
-        if not fpocket_output_dir.exists():
+        if resolved_output_dir is None or not resolved_output_dir.exists():
             raise CavityDetectionError(
                 f"fpocket output directory not found: {fpocket_output_dir}"
             )
         # Parse cavity information
-        cavities = parse_fpocket_output(fpocket_output_dir, protein_path.stem, margin, min_grid_size, max_grid_size)
+        cavities = parse_fpocket_output(resolved_output_dir, protein_path.stem, margin, min_grid_size, max_grid_size)
     except CavityDetectionError:
         # Re-raise our custom errors
         raise
