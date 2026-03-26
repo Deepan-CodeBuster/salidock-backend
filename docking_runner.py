@@ -5,6 +5,30 @@ from typing import List, Dict, Tuple
 
 VINA_BIN = os.environ.get('VINA_BIN', 'vina')
 
+
+def _env_int(name: str, default: int, min_value: int = 1) -> int:
+    """Read integer env var with safe fallback and lower-bound validation."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        return value if value >= min_value else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_float(name: str, default: float, min_value: float = 0.0) -> float:
+    """Read float env var with safe fallback and lower-bound validation."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+        return value if value > min_value else default
+    except (ValueError, TypeError):
+        return default
+
 def run_vina(
     receptor_pdbqt: str,
     ligand_pdbqt: str,
@@ -59,9 +83,12 @@ def run_vina(
     if grid_spacing > 2.0:
         raise ValueError(f"Grid spacing too large (>{2.0} Å), got {grid_spacing}. Use smaller values for better accuracy.")
     
-    # Fixed docking parameters
-    exhaustiveness = 10  # Fixed value, not user-configurable
-    num_modes = 9  # Fixed value, not user-configurable
+    # Tunable docking parameters via environment variables (with backward-compatible defaults)
+    # Useful for large proteins where default timeout can be exceeded.
+    timeout = _env_int('VINA_TIMEOUT_SECONDS', timeout, min_value=60)
+    exhaustiveness = _env_int('VINA_EXHAUSTIVENESS', 10, min_value=1)
+    num_modes = _env_int('VINA_NUM_MODES', 9, min_value=1)
+    grid_spacing = _env_float('VINA_GRID_SPACING', grid_spacing, min_value=0.0)
     
     # Check if Vina binary exists
     vina_path = shutil.which(VINA_BIN)
@@ -93,6 +120,10 @@ def run_vina(
     
     # Log command for debugging
     print(f"Running Vina command: {' '.join(cmd)}")
+    print(
+        f"[INFO] Vina params => timeout={timeout}s, "
+        f"exhaustiveness={exhaustiveness}, num_modes={num_modes}, spacing={grid_spacing}"
+    )
     
     # Prepare log file
     log_file = f"{out_prefix}.log"
@@ -116,7 +147,8 @@ def run_vina(
         
         raise RuntimeError(
             f"Vina execution timed out after {timeout} seconds. "
-            f"Consider increasing the timeout parameter or reducing exhaustiveness."
+            f"Current parameters: exhaustiveness={exhaustiveness}, num_modes={num_modes}, spacing={grid_spacing}. "
+            f"Try setting env vars VINA_TIMEOUT_SECONDS, VINA_EXHAUSTIVENESS, VINA_NUM_MODES."
         )
     
     if proc.returncode != 0:
